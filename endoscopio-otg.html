@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Endoscópio OTG</title>
+<style>
+  :root { --acc:#22d3ee; --bg:#0b0d10; --pn:#15181d; --tx:#e7eaee; --mu:#8a929c; --rec:#ef4444; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--tx); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; overflow:hidden; }
+  #app { display:flex; flex-direction:column; height:100dvh; }
+
+  header { display:flex; gap:8px; align-items:center; padding:calc(env(safe-area-inset-top) + 8px) 10px 8px; background:var(--pn); }
+  header select { flex:1; min-width:0; }
+  select, button { font:inherit; color:var(--tx); background:#22262d; border:1px solid #2e333b; border-radius:10px; padding:9px 10px; }
+  button { cursor:pointer; }
+  button:active { transform:scale(.96); }
+  .ico { width:42px; height:42px; padding:0; display:grid; place-items:center; font-size:19px; flex:none; }
+
+  #stage { position:relative; flex:1; display:grid; place-items:center; background:#000; overflow:hidden; }
+  #view { max-width:100%; max-height:100%; background:#000; touch-action:none; }
+  #overlay { position:absolute; inset:0; pointer-events:none; display:grid; place-items:center; }
+  #overlay svg { width:min(80vw,80vh); height:min(80vw,80vh); opacity:.55; }
+  #hud { position:absolute; top:10px; left:10px; right:10px; display:flex; justify-content:space-between; font-size:12px; color:#cfd6dd; text-shadow:0 1px 2px #000; pointer-events:none; }
+  #recBadge { display:none; color:#fff; background:var(--rec); border-radius:6px; padding:2px 8px; font-weight:600; }
+  #recBadge.on { display:inline-block; animation:blink 1s infinite; }
+  @keyframes blink { 50% { opacity:.55; } }
+  #msg { position:absolute; inset:0; display:grid; place-items:center; text-align:center; padding:24px; color:var(--mu); font-size:15px; line-height:1.5; }
+  #msg b { color:var(--tx); }
+  #flash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .25s; }
+
+  #controls { background:var(--pn); padding:8px 10px calc(env(safe-area-inset-bottom) + 10px); }
+  #main { display:flex; align-items:center; justify-content:space-around; gap:8px; }
+  #shot { width:64px; height:64px; border-radius:50%; background:#fff; border:4px solid #3a3f47; font-size:0; }
+  #rec { width:56px; height:56px; border-radius:50%; background:#2a2e35; border:3px solid var(--rec); display:grid; place-items:center; }
+  #rec::after { content:""; width:22px; height:22px; border-radius:50%; background:var(--rec); transition:all .2s; }
+  #rec.on::after { border-radius:4px; width:20px; height:20px; }
+
+  #adjust { display:none; margin-top:10px; gap:8px 12px; grid-template-columns:auto 1fr auto; align-items:center; font-size:13px; color:var(--mu); }
+  #adjust.open { display:grid; }
+  #adjust input[type=range] { width:100%; accent-color:var(--acc); }
+  #adjust output { width:38px; text-align:right; color:var(--tx); }
+  .row2 { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:6px; }
+  .row2 button { padding:7px 10px; font-size:13px; }
+  .row2 button.act { border-color:var(--acc); color:var(--acc); }
+
+  #gallery { display:flex; gap:6px; overflow-x:auto; margin-top:8px; }
+  #gallery:empty { display:none; }
+  .thumb { position:relative; flex:none; width:64px; height:48px; border-radius:8px; overflow:hidden; border:1px solid #2e333b; background:#000; }
+  .thumb img, .thumb video { width:100%; height:100%; object-fit:cover; }
+  .thumb span { position:absolute; bottom:1px; right:3px; font-size:10px; text-shadow:0 1px 2px #000; }
+
+  #viewer { position:fixed; inset:0; background:rgba(0,0,0,.94); display:none; flex-direction:column; z-index:10; }
+  #viewer.open { display:flex; }
+  #viewerBody { flex:1; display:grid; place-items:center; padding:10px; min-height:0; }
+  #viewerBody img, #viewerBody video { max-width:100%; max-height:100%; }
+  #viewerBar { display:flex; gap:8px; justify-content:center; padding:10px 10px calc(env(safe-area-inset-bottom) + 12px); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <select id="camSel" aria-label="Câmera"><option>Nenhuma câmera</option></select>
+    <select id="resSel" aria-label="Resolução" style="flex:none;width:96px">
+      <option value="640x480">480p</option>
+      <option value="1280x720" selected>720p</option>
+      <option value="1920x1080">1080p</option>
+    </select>
+    <button class="ico" id="refresh" title="Procurar câmeras">⟳</button>
+    <button class="ico" id="fs" title="Tela cheia">⛶</button>
+  </header>
+
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="overlay"></div>
+    <div id="hud"><span id="info"></span><span id="recBadge">● REC 00:00</span></div>
+    <div id="flash"></div>
+    <div id="msg">
+      <div>
+        <b>Conecte o endoscópio no cabo OTG</b><br>
+        e toque em <b>Iniciar câmera</b>.<br><br>
+        <button id="startBtn" style="padding:12px 20px">Iniciar câmera</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div id="main">
+      <button class="ico" id="adjBtn" title="Ajustes">⚙</button>
+      <button id="rec" title="Gravar vídeo"></button>
+      <button id="shot" title="Foto">Foto</button>
+      <button class="ico" id="rotBtn" title="Girar 90°">⟳</button>
+      <button class="ico" id="ovBtn" title="Mira">⊕</button>
+    </div>
+
+    <div id="adjust">
+      <span>Zoom</span><input id="zoom" type="range" min="1" max="4" step="0.1" value="1"><output id="zoomO">1.0×</output>
+      <span>Brilho</span><input id="bri" type="range" min="50" max="200" value="100"><output id="briO">100</output>
+      <span>Contraste</span><input id="con" type="range" min="50" max="200" value="100"><output id="conO">100</output>
+      <span>Saturação</span><input id="sat" type="range" min="0" max="200" value="100"><output id="satO">100</output>
+      <div class="row2">
+        <button id="flipH">Espelhar ↔</button>
+        <button id="flipV">Inverter ↕</button>
+        <button id="gray">P&amp;B</button>
+        <button id="stamp" class="act">Data/hora no arquivo</button>
+        <button id="reset">Restaurar</button>
+      </div>
+    </div>
+
+    <div id="gallery"></div>
+  </div>
+</div>
+
+<div id="viewer">
+  <div id="viewerBody"></div>
+  <div id="viewerBar">
+    <button id="vSave">Salvar</button>
+    <button id="vShare">Compartilhar</button>
+    <button id="vDel">Excluir</button>
+    <button id="vClose">Fechar</button>
+  </div>
+</div>
+
+<video id="src" playsinline muted autoplay style="display:none"></video>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $('src'), canvas = $('view'), ctx = canvas.getContext('2d');
+  const camSel = $('camSel'), resSel = $('resSel'), msg = $('msg'), info = $('info');
+
+  const st = { stream:null, rot:0, flipH:false, flipV:false, gray:false, stamp:true,
+               zoom:1, bri:100, con:100, sat:100, overlay:0, recorder:null, chunks:[], recStart:0 };
+  const items = []; let current = null;
+
+  // ---------- Câmeras ----------
+  async function listCams(keep) {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const prev = keep || camSel.value;
+    camSel.innerHTML = '';
+    if (!devs.length) { camSel.innerHTML = '<option value="">Nenhuma câmera</option>'; return devs; }
+    devs.forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      let name = d.label || `Câmera ${i+1}`;
+      if (/usb|uvc|external|externa|endo/i.test(name)) name = '🔌 ' + name;
+      o.textContent = name;
+      camSel.appendChild(o);
+    });
+    if (devs.some(d => d.deviceId === prev)) camSel.value = prev;
+    else {
+      // Prefere uma câmera externa/USB; senão, a última da lista (costuma ser a recém-conectada)
+      const ext = devs.find(d => /usb|uvc|external|externa|endo/i.test(d.label));
+      camSel.value = (ext || devs[devs.length-1]).deviceId;
+    }
+    return devs;
+  }
+
+  function stopStream() {
+    if (st.stream) st.stream.getTracks().forEach(t => t.stop());
+    st.stream = null;
+  }
+
+  async function start(deviceId) {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showMsg('Este navegador não dá acesso à câmera.<br>Abra a página em <b>https://</b> (ou localhost) no Chrome.');
+      return;
+    }
+    if (st.recorder) stopRec();
+    stopStream();
+    const [w, h] = resSel.value.split('x').map(Number);
+    const base = { width:{ideal:w}, height:{ideal:h}, frameRate:{ideal:30} };
+    try {
+      st.stream = await navigator.mediaDevices.getUserMedia({
+        audio:false,
+        video: deviceId ? { ...base, deviceId:{ exact:deviceId } } : base
+      });
+    } catch (e) {
+      try { st.stream = await navigator.mediaDevices.getUserMedia({ video: deviceId ? { deviceId:{exact:deviceId} } : true }); }
+      catch (e2) { showMsg(`Não foi possível abrir a câmera.<br><b>${e2.name}</b>: ${e2.message}`); return; }
+    }
+    video.srcObject = st.stream;
+    await video.play().catch(()=>{});
+    const track = st.stream.getVideoTracks()[0];
+    const s = track.getSettings();
+    await listCams(s.deviceId);
+    if (s.deviceId) camSel.value = s.deviceId;
+    info.textContent = `${s.width||'?'}×${s.height||'?'} @ ${Math.round(s.frameRate||0)}fps`;
+    track.onended = () => showMsg('<b>Câmera desconectada.</b><br>Reconecte o endoscópio e toque em Iniciar.<br><br><button onclick="document.getElementById(\'startBtn\').click()" style="padding:12px 20px">Iniciar câmera</button>');
+    msg.style.display = 'none';
+  }
+
+  function showMsg(html) { msg.innerHTML = `<div>${html}</div>`; msg.style.display = 'grid'; }
+
+  // ---------- Renderização ----------
+  function filterStr() {
+    return `brightness(${st.bri}%) contrast(${st.con}%) saturate(${st.gray ? 0 : st.sat}%)`;
+  }
+
+  function drawFrame(c, cx, withStamp) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return false;
+    const rotated = st.rot % 180 !== 0;
+    const W = rotated ? vh : vw, H = rotated ? vw : vh;
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const sw = vw / st.zoom, sh = vh / st.zoom, sx = (vw - sw)/2, sy = (vh - sh)/2;
+    cx.save();
+    cx.filter = filterStr();
+    cx.translate(W/2, H/2);
+    cx.rotate(st.rot * Math.PI/180);
+    cx.scale(st.flipH ? -1 : 1, st.flipV ? -1 : 1);
+    cx.drawImage(video, sx, sy, sw, sh, -vw/2, -vh/2, vw, vh);
+    cx.restore();
+    if (withStamp && st.stamp) {
+      const t = new Date().toLocaleString('pt-BR');
+      const fs = Math.max(14, Math.round(W/40));
+      cx.font = `600 ${fs}px system-ui, sans-serif`;
+      cx.textBaseline = 'bottom';
+      cx.fillStyle = 'rgba(0,0,0,.55)';
+      const tw = cx.measureText(t).width;
+      cx.fillRect(W - tw - fs*1.2, H - fs*1.9, tw + fs*.8, fs*1.5);
+      cx.fillStyle = '#fff';
+      cx.fillText(t, W - tw - fs*.8, H - fs*.6);
+    }
+    return true;
+  }
+
+  function loop() {
+    // Durante gravação, a marca de data/hora vai no próprio canvas gravado
+    drawFrame(canvas, ctx, !!st.recorder);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // ---------- Foto ----------
+  function flash() { const f = $('flash'); f.style.opacity = .8; setTimeout(() => f.style.opacity = 0, 80); }
+
+  $('shot').onclick = () => {
+    if (!video.videoWidth) return;
+    const c = document.createElement('canvas'), cx = c.getContext('2d');
+    drawFrame(c, cx, true);
+    c.toBlob(b => { addItem(b, 'img', 'jpg'); flash(); navigator.vibrate?.(30); }, 'image/jpeg', 0.95);
+  };
+
+  // ---------- Vídeo ----------
+  function pickMime() {
+    const opts = ['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+    return opts.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+  }
+
+  function startRec() {
+    if (!video.videoWidth || !window.MediaRecorder) { alert('Gravação não suportada neste navegador.'); return; }
+    const mime = pickMime();
+    const stream = canvas.captureStream(30);
+    st.chunks = [];
+    st.recorder = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: 6_000_000 });
+    st.recorder.ondataavailable = e => e.data.size && st.chunks.push(e.data);
+    st.recorder.onstop = () => {
+      const type = st.recorder?.mimeType || mime || 'video/webm';
+      const blob = new Blob(st.chunks, { type });
+      addItem(blob, 'video', type.includes('mp4') ? 'mp4' : 'webm');
+      st.recorder = null;
+    };
+    st.recorder.start(1000);
+    st.recStart = Date.now();
+    $('rec').classList.add('on'); $('recBadge').classList.add('on');
+    tickRec();
+  }
+  function stopRec() {
+    if (st.recorder && st.recorder.state !== 'inactive') st.recorder.stop();
+    $('rec').classList.remove('on'); $('recBadge').classList.remove('on');
+  }
+  function tickRec() {
+    if (!st.recorder) return;
+    const s = Math.floor((Date.now() - st.recStart)/1000);
+    $('recBadge').textContent = `● REC ${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+    setTimeout(tickRec, 500);
+  }
+  $('rec').onclick = () => st.recorder ? stopRec() : startRec();
+
+  // ---------- Galeria ----------
+  function fname(ext) {
+    const d = new Date(), p = n => String(n).padStart(2,'0');
+    return `endoscopio_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+  }
+  function addItem(blob, kind, ext) {
+    const it = { blob, kind, name: fname(ext), url: URL.createObjectURL(blob) };
+    items.unshift(it);
+    renderGallery();
+  }
+  function renderGallery() {
+    const g = $('gallery'); g.innerHTML = '';
+    items.forEach(it => {
+      const d = document.createElement('div'); d.className = 'thumb';
+      d.innerHTML = it.kind === 'img' ? `<img src="${it.url}">` : `<video src="${it.url}#t=0.1" muted playsinline></video><span>▶</span>`;
+      d.onclick = () => openViewer(it);
+      g.appendChild(d);
+    });
+  }
+  function openViewer(it) {
+    current = it;
+    $('viewerBody').innerHTML = it.kind === 'img' ? `<img src="${it.url}">` : `<video src="${it.url}" controls playsinline autoplay></video>`;
+    $('vShare').style.display = (navigator.canShare && navigator.canShare({ files:[new File([it.blob], it.name, {type:it.blob.type})] })) ? '' : 'none';
+    $('viewer').classList.add('open');
+  }
+  $('vClose').onclick = () => { $('viewer').classList.remove('open'); $('viewerBody').innerHTML = ''; };
+  $('vSave').onclick = () => { const a = document.createElement('a'); a.href = current.url; a.download = current.name; a.click(); };
+  $('vShare').onclick = async () => {
+    try { await navigator.share({ files:[new File([current.blob], current.name, {type:current.blob.type})], title: current.name }); } catch {}
+  };
+  $('vDel').onclick = () => {
+    const i = items.indexOf(current); if (i >= 0) { URL.revokeObjectURL(current.url); items.splice(i,1); }
+    renderGallery(); $('vClose').click();
+  };
+
+  // ---------- Ajustes ----------
+  $('adjBtn').onclick = () => $('adjust').classList.toggle('open');
+  const bind = (id, key, fmt) => {
+    const el = $(id), out = $(id+'O');
+    el.oninput = () => { st[key] = +el.value; out.textContent = fmt(st[key]); };
+  };
+  bind('zoom','zoom', v => v.toFixed(1)+'×');
+  bind('bri','bri', v => v); bind('con','con', v => v); bind('sat','sat', v => v);
+  const toggle = (id, key) => $(id).onclick = () => { st[key] = !st[key]; $(id).classList.toggle('act', st[key]); };
+  toggle('flipH','flipH'); toggle('flipV','flipV'); toggle('gray','gray'); toggle('stamp','stamp');
+  $('rotBtn').onclick = () => st.rot = (st.rot + 90) % 360;
+  $('reset').onclick = () => {
+    Object.assign(st, { rot:0, flipH:false, flipV:false, gray:false, zoom:1, bri:100, con:100, sat:100 });
+    ['zoom','bri','con','sat'].forEach(id => { $(id).value = st[id]; $(id).oninput(); });
+    ['flipH','flipV','gray'].forEach(id => $(id).classList.remove('act'));
+  };
+
+  // Pinça para zoom no visor
+  let pinch = null;
+  canvas.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) pinch = { d: dist(e.touches), z: st.zoom };
+  }, { passive:true });
+  canvas.addEventListener('touchmove', e => {
+    if (pinch && e.touches.length === 2) {
+      st.zoom = Math.min(4, Math.max(1, pinch.z * dist(e.touches) / pinch.d));
+      $('zoom').value = st.zoom; $('zoomO').textContent = st.zoom.toFixed(1)+'×';
+    }
+  }, { passive:true });
+  canvas.addEventListener('touchend', () => pinch = null);
+  const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+  // ---------- Mira / retícula ----------
+  const overlays = [
+    '',
+    `<svg viewBox="0 0 100 100" fill="none" stroke="#22d3ee" stroke-width=".5"><circle cx="50" cy="50" r="48"/><line x1="50" y1="40" x2="50" y2="60"/><line x1="40" y1="50" x2="60" y2="50"/></svg>`,
+    `<svg viewBox="0 0 100 100" fill="none" stroke="#22d3ee" stroke-width=".35">${[...Array(9)].map((_,i)=>`<line x1="${(i+1)*10}" y1="0" x2="${(i+1)*10}" y2="100"/><line x1="0" y1="${(i+1)*10}" x2="100" y2="${(i+1)*10}"/>`).join('')}</svg>`
+  ];
+  $('ovBtn').onclick = () => { st.overlay = (st.overlay + 1) % overlays.length; $('overlay').innerHTML = overlays[st.overlay]; };
+
+  // ---------- Diversos ----------
+  $('startBtn').onclick = () => start(camSel.value || undefined);
+  camSel.onchange = () => start(camSel.value);
+  resSel.onchange = () => st.stream && start(camSel.value);
+  $('refresh').onclick = async () => { await listCams(); if (st.stream) start(camSel.value); };
+  $('fs').onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.().catch(()=>{});
+
+  // Detecta quando o endoscópio é plugado/desplugado
+  navigator.mediaDevices?.addEventListener?.('devicechange', async () => {
+    const before = [...camSel.options].map(o => o.value);
+    const devs = await listCams();
+    const novo = devs.find(d => !before.includes(d.deviceId));
+    if (novo) start(novo.deviceId);
+  });
+
+  // Mantém a tela acesa
+  let lock = null;
+  const keepAwake = async () => { try { lock = await navigator.wakeLock?.request('screen'); } catch {} };
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && keepAwake());
+  keepAwake();
+
+  if (!isSecureContext) showMsg('A câmera só funciona em <b>https://</b> ou <b>localhost</b>.<br>Hospede o arquivo (ex.: GitHub Pages) e abra pelo Chrome.');
+})();
+</script>
+</body>
+</html>
